@@ -1,23 +1,18 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from passlib.context import CryptContext
 import httpx
-
-# --- Configuración de Hashing ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-# --- Configuración de Hashing ---
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
 
 # --- Simulación de Base de Datos ---
-# En una aplicación real, esto vendría de una base de datos.
-# La contraseña 'adminpass' ha sido hasheada previamente.
-# Puedes generar un nuevo hash con: pwd_context.hash("nueva_contraseña")
+# Registramos al usuario admin con su contraseña "adminpass" ya hasheada correctamente con bcrypt nativo
+ADMIN_PASSWORD_PLAIN = "adminpass"
+# Generamos el hash seguro de manera interna para la simulación
+HASHED_PASSWORD_REAL = bcrypt.hashpw(ADMIN_PASSWORD_PLAIN.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
 fake_db = {
     "admin": {
         "username": "admin",
-        "hashed_password": "$2b$12$EixZaYVK1f72w20a/2Vn.e.1v.w/3j.Q.pY3.w/5k.Z.Y.K.X.O.a" 
+        "hashed_password": HASHED_PASSWORD_REAL
     }
 }
 
@@ -39,8 +34,14 @@ async def login(user_credentials: UserLogin):
     if not user_in_db:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    # Obtenemos el hash almacenado en formato de bytes para que bcrypt lo procese
+    stored_hash_bytes = user_in_db["hashed_password"].encode('utf-8')
+    # Obtenemos la contraseña digitada en texto plano en formato de bytes
+    input_password_bytes = user_credentials.password.encode('utf-8')
+
+    # Validamos usando la función nativa de bcrypt.checkpw
     # El hashing con salt aleatorio asegura las credenciales
-    if not pwd_context.verify(user_credentials.password, user_in_db["hashed_password"]):
+    if not bcrypt.checkpw(input_password_bytes, stored_hash_bytes):
         raise HTTPException(status_code=400, detail="Contraseña incorrecta")
 
     return {"message": f"Bienvenido {user_credentials.username}, autenticación exitosa"}
@@ -56,14 +57,13 @@ async def ingest_crypto_data():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(coingecko_url)
-            response.raise_for_status()  # Lanza una excepción para respuestas 4xx/5xx
+            response.raise_for_status()
             data = response.json()
             
-            # Extraer el precio de la respuesta
             btc_price = data.get("bitcoin", {}).get("usd")
             
             if btc_price is None:
-                raise HTTPException(status_code=500, detail="No se pudo obtener el precio de Bitcoin del a respuesta de la API.")
+                raise HTTPException(status_code=500, detail="No se pudo obtener el precio de Bitcoin de la respuesta de la API.")
 
             return {"bitcoin_usd": btc_price}
 
@@ -73,9 +73,6 @@ async def ingest_crypto_data():
             raise HTTPException(status_code=500, detail=f"Ocurrió un error inesperado: {exc}")
 
 
-# --- Ejecución (para desarrollo) ---
 if __name__ == "__main__":
     import uvicorn
-    # Para generar un nuevo hash para la DB:
-    # print(pwd_context.hash("adminpass"))
     uvicorn.run(app, host="0.0.0.0", port=8000)
